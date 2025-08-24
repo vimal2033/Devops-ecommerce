@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: webapp-application-deployment
+spec:
+ replicas: 1
+ selector:
+  matchLabels:
+   app: my-app
+ template:
+  metadata:
+   labels:
+    app: my-app
+  spec:
+   containers:
+   - name: my-app
+     image: docker.io/goudsagar/webapp-app-tomcat:latest
+     imagePullPolicy: IfNotPresent
+     ports:
+     - containerPort: 8080

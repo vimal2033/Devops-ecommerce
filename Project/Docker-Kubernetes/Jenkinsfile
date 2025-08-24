@@ -1,0 +1,150 @@
+pipeline{
+    agent {
+      node {
+        label 'slave_1'
+      }
+    }
+
+    tools {
+         maven 'MAVEN_HOME'
+         jdk 'JAVA_HOME'
+    }
+
+    stages {
+      stage('pre-build step') {
+            steps {
+		sh '''
+                echo "Pre Build Step"
+		'''
+	    }
+	}
+       stage('Git Checkout'){
+            steps{
+                checkout([$class: 'GitSCM', branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[credentialsId: 'github access', url: 'https://github.com/devopscloudtrainer25/Project-Management.git']]])
+            }
+        }
+        stage('build'){
+            steps{
+               sh '''
+                mvn package
+                mv target/*.war target/webapp.war
+		cp -r ${WORKSPACE}/target/webapp.war ${WORKSPACE}/Project/Docker-Kubernetes/
+                '''
+            }
+        }
+        stage ('Unit Test') {
+	        steps {
+                echo 'Running Unit Testing'
+                sh '''
+                mvn test
+                '''
+             }
+         }
+         stage ('Update Local Repository') {
+                steps {
+                  echo 'Update m2 repository'
+                  sh '''
+                  mvn install
+                  '''
+             }
+         }
+         stage ('Static Code Analysis') {
+             environment {
+             scannerHome = tool 'SONAR_SCANNER'
+             }
+             steps {
+                echo 'Running Static Code Analysis'
+                 withSonarQubeEnv('SONAR_HOME') {
+                 sh '${scannerHome}/bin/sonar-scanner'
+                 }
+            }
+        }
+        stage('Jfrog Artifact Upload') {
+            steps {
+              rtUpload (
+                serverId: 'artifactory',
+                spec: '''{
+                      "files": [
+                        {
+                          "pattern": "*.war",
+                           "target": "local-snapshot-repo"
+                        }
+                    ]
+                }'''
+              )
+          }
+        }
+         stage ('Docker Build') {
+                 steps {
+                    script {
+                      sh "docker build -t goudsagar/webapp-app-tomcat:latest -f Project/Docker-Kubernetes/Dockerfile ."
+                     }
+                    } 
+                }
+                stage ('Docker Push') {
+                 steps{
+                        sh ''' 
+			  docker push goudsagar/webapp-app-tomcat:latest
+	                '''
+                     }      
+               }
+          stage('Kubernetes Deployment') {
+            parallel {
+              stage('Kubernetes Dev') {
+                 when {
+                   expression { "$Env_Name" == 'dev-ns' }
+                 }
+                  steps{
+                      echo "Deployment in Dev Environment"
+                      sh '''
+                        kubectl apply -f  Project/Docker-Kubernetes/deployment.yaml -n "$Env_Name"
+                        sleep 10
+		        kubectl apply -f Project/Docker-Kubernetes/service.yaml -n "$Env_Name"
+                      '''
+                   }
+                }
+             stage('Kubernetes SBOX'){
+               when {
+                 expression { "$Env_Name" == 'sbox-ns' }
+               }
+               steps {
+                   echo "Deployment in SBOX Environment"
+                      sh '''
+                        kubectl apply -f  Project/Docker-Kubernetes/deployment.yaml -n "$Env_Name"
+                        sleep 10
+		        kubectl apply -f Project/Docker-Kubernetes/service.yaml -n "$Env_Name"
+                    '''
+                  }
+                }
+             stage('Kubernetes Prod '){
+               when {
+                 expression { "$Env_Name" == 'prod-ns' }
+               }
+               steps {
+                   echo "Deployment in Prod Environment"
+                     sh '''
+                        kubectl apply -f  Project/Docker-Kubernetes/deployment.yaml -n "$Env_Name"
+                        sleep 10
+		        kubectl apply -f Project/Docker-Kubernetes/service.yaml -n "$Env_Name"
+                      '''
+                  }
+                }
+            }
+          }
+         stage (' Deployment Validation') {
+	        steps {
+                sh '''
+                  sleep 10
+                   kubectl get all -n "$Env_Name"
+                 '''
+             }
+         }
+       stage('post-build step') {
+            steps {
+		sh '''
+                echo "Successfull Pipeline"
+		'''
+	    }
+	}
+     }
+}

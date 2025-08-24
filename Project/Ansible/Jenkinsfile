@@ -1,0 +1,108 @@
+pipeline{
+    agent {
+      node {
+        label 'slave_1'
+      }
+    }
+
+    tools {
+         maven 'MAVEN_HOME'
+         jdk 'JAVA_HOME'
+    }
+    stages {
+     stage('pre-build step') {
+            steps {
+		sh '''
+                echo "Pre Build Step"
+		'''
+	    }
+	}
+       stage('Git Checkout') {
+            steps{
+                checkout([$class: 'GitSCM', branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[credentialsId: '', url: 'https://github.com/devopscloudtrainer25/Project-Management.git']]])
+            }
+        }
+        stage('build') {
+            steps{
+               sh '''
+                mvn package
+                mv target/*.war target/webapp.war
+		cp -r ${WORKSPACE}/target/webapp.war /var/lib/jenkins/
+                '''
+            }
+        }
+        stage ('Unit Test') {
+	        steps {
+                echo 'Running Unit Testing'
+                sh '''
+                mvn test
+                '''
+             }
+         }
+         stage ('Update Local Repository') {
+             steps {
+                  sh '''
+                  mvn install
+                  '''
+             }
+         }
+         stage ('Static Code Analysis') {
+             environment {
+             scannerHome = tool 'SONAR_SCANNER'
+             }
+             steps {
+                echo 'Running Static Code Analysis'
+                 withSonarQubeEnv('SONAR_HOME') {
+                 sh '${scannerHome}/bin/sonar-scanner'
+                 }
+            }
+        }
+         stage('Jfrog Artifact Upload') {
+            steps {
+              rtUpload (
+                serverId: 'artifactory',
+                spec: '''{
+                      "files": [
+                        {
+                          "pattern": "*.war",
+                           "target": "local-snapshot-repo"
+                        }
+                    ]
+                }'''
+              )
+          }
+        }
+        stage('Ansible Deployment') {
+         parallel {
+            stage('Ansible Dev Deployment') {
+                when {
+                  expression { "$Env_Name" == 'DEV' }
+                 }
+                 steps{
+                    script {
+                      sh "ansible-playbook -i /var/lib/jenkins/inventory Project/Ansible/webserver-1-tomcat.yml -vv"
+                     }
+                    } 
+                  }
+
+            stage('Ansible Prod Deployment') {
+                when {
+                  expression { "$Env_Name" == 'PROD' }
+                 }
+                 steps{
+                    script {
+                      sh "ansible-playbook -i /var/lib/jenkins/inventory Project/Ansible/webserver-2-tomcat.yml -vv"
+                     }
+                    } 
+                  }
+                }
+            }
+        stage('post-build step') {
+            steps {
+		sh '''
+                echo "Successfull Pipeline"
+		'''
+	    }
+	}
+     }
+}
