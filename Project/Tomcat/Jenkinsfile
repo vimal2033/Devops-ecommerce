@@ -5,12 +5,6 @@ pipeline{
     }
 }
 
-    tools {
-         maven 'MAVEN_HOME'
-         jdk 'JAVA_HOME'
-         git 'GIT_HOME'
-    }
-
     stages{
         stage('pre-build step') {
             steps {
